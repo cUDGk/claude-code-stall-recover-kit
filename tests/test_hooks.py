@@ -9,9 +9,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STALL_HOOK = ROOT / "hooks" / "stall_recover.py"
 GUARD_HOOK = ROOT / "hooks" / "tool_call_guard.py"
+HEALTH_HOOK = ROOT / "hooks" / "session_health_guard.py"
 
 
-def run_hook(script, payload):
+def run_hook(script, payload, extra_env=None):
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
     proc = subprocess.run(
         [sys.executable, str(script)],
         input=json.dumps(payload),
@@ -19,6 +23,7 @@ def run_hook(script, payload):
         capture_output=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
     return proc
 
@@ -97,12 +102,56 @@ def test_task_absorb():
     return tmp
 
 
+def test_mcp_absorb():
+    text = """call
+<invoke name="mcp__win-control__ui_tree">
+<parameter name="hwnd">123</parameter>
+</invoke>"""
+    tmp, transcript = make_transcript(text, "mcp-1")
+    proc = run_hook(
+        STALL_HOOK,
+        {"hook_event_name": "Stop", "transcript_path": str(transcript), "session_id": "test"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["decision"] == "block"
+    assert "absorbed" in data["reason"]
+    assert "mcp__win-control__ui_tree" in data["reason"]
+    return tmp
+
+
 def test_guard_context():
     proc = run_hook(GUARD_HOOK, {"hook_event_name": "UserPromptSubmit", "session_id": "test"})
     assert proc.returncode == 0, proc.stderr
     data = json.loads(proc.stdout)
     ctx = data["hookSpecificOutput"]["additionalContext"]
     assert "never write literal" in ctx
+    assert "court" in ctx
+
+
+def test_session_health_guard_blocks_bad_transcript():
+    text = (
+        "x" * 200
+        + "\n<invoke name=\"Bash\"><parameter name=\"command\">echo bad</parameter></invoke>"
+    )
+    tmp, transcript = make_transcript(text, "bad-session")
+    proc = run_hook(
+        HEALTH_HOOK,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "transcript_path": str(transcript),
+            "session_id": "bad-session",
+        },
+        {
+            "CLAUDE_CODE_BAD_SESSION_GUARD": "1",
+            "CLAUDE_CODE_BAD_SESSION_MAX_BYTES": "100",
+            "CLAUDE_CODE_BAD_SESSION_MAX_LEAK_EVENTS": "1",
+        },
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["decision"] == "block"
+    assert "隔離対象" in data["reason"]
 
 
 def main():
@@ -112,7 +161,9 @@ def main():
     test_bash_leak()
     test_write_leak()
     test_task_absorb()
+    test_mcp_absorb()
     test_guard_context()
+    test_session_health_guard_blocks_bad_transcript()
     print("all hook tests passed")
 
 

@@ -1,11 +1,19 @@
 {
   "env": {
-    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "64"
+    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "64",
+    "CLAUDE_CODE_BAD_SESSION_GUARD": "1",
+    "CLAUDE_CODE_BAD_SESSION_MAX_BYTES": "6000000",
+    "CLAUDE_CODE_BAD_SESSION_MAX_LEAK_EVENTS": "8"
   },
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/user/.claude/hooks/session_health_guard.py",
+            "timeout": 10
+          },
           {
             "type": "command",
             "command": "python C:/Users/user/.claude/hooks/tool_call_guard.py",
@@ -17,6 +25,11 @@
     "UserPromptSubmit": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/user/.claude/hooks/session_health_guard.py",
+            "timeout": 10
+          },
           {
             "type": "command",
             "command": "python C:/Users/user/.claude/hooks/tool_call_guard.py",
@@ -49,4 +62,3 @@
     ]
   }
 }
-

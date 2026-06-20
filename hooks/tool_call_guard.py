@@ -7,7 +7,9 @@ CONTEXT = (
     "CRITICAL Claude Code tool-call guard: never write literal `call`, "
     "`<invoke ...>`, `<parameter ...>`, `antml:invoke`, or "
     "`antml:function_calls` in assistant text. If a tool is needed, emit a real "
-    "Claude Code tool_use only. Keep Bash calls short and ASCII. Put complex, "
+    "Claude Code tool_use only. Also never prefix leaked tool XML with stray "
+    "tokens like `court` or `co`; that is still a broken plain-text tool call. "
+    "Keep Bash calls short and ASCII. Put complex, "
     "multi-step, quoted, or Japanese content into a file first, then run one "
     "short command. One tool call per assistant step."
 )
@@ -15,10 +17,17 @@ CONTEXT = (
 LONG_SESSION_CONTEXT = (
     "Long-session tool-call guard is active. This transcript is large enough "
     "that legacy XML tool-call leakage has occurred before. Use only native "
-    "tool_use blocks; never print call/<invoke> markup as text."
+    "tool_use blocks; never print call/<invoke> markup, `court`, or `co` as "
+    "tool-call text."
 )
 
 STATE_PATH = Path.home() / ".claude" / "hooks" / "tool_call_guard_state.json"
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 
 def read_input():

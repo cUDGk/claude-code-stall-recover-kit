@@ -9,6 +9,7 @@ $backupPath = "$settingsPath.bak.$(Get-Date -Format 'yyyyMMddHHmmss')"
 New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo "hooks\stall_recover.py") -Destination (Join-Path $hooksDir "stall_recover.py") -Force
 Copy-Item -LiteralPath (Join-Path $repo "hooks\tool_call_guard.py") -Destination (Join-Path $hooksDir "tool_call_guard.py") -Force
+Copy-Item -LiteralPath (Join-Path $repo "hooks\session_health_guard.py") -Destination (Join-Path $hooksDir "session_health_guard.py") -Force
 
 if (Test-Path $settingsPath) {
   Copy-Item -LiteralPath $settingsPath -Destination $backupPath -Force
@@ -21,14 +22,23 @@ if (-not $settings.PSObject.Properties.Name.Contains("env")) {
   $settings | Add-Member -NotePropertyName env -NotePropertyValue ([pscustomobject]@{})
 }
 $settings.env | Add-Member -NotePropertyName CLAUDE_CODE_STOP_HOOK_BLOCK_CAP -NotePropertyValue "64" -Force
+$settings.env | Add-Member -NotePropertyName CLAUDE_CODE_BAD_SESSION_GUARD -NotePropertyValue "1" -Force
+$settings.env | Add-Member -NotePropertyName CLAUDE_CODE_BAD_SESSION_MAX_BYTES -NotePropertyValue "6000000" -Force
+$settings.env | Add-Member -NotePropertyName CLAUDE_CODE_BAD_SESSION_MAX_LEAK_EVENTS -NotePropertyValue "8" -Force
 
 if (-not $settings.PSObject.Properties.Name.Contains("hooks")) {
   $settings | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]@{})
 }
 
 $hookMap = [ordered]@{
-  SessionStart = @(@{ hooks = @(@{ type = "command"; command = "python C:/Users/user/.claude/hooks/tool_call_guard.py"; timeout = 5 }) })
-  UserPromptSubmit = @(@{ hooks = @(@{ type = "command"; command = "python C:/Users/user/.claude/hooks/tool_call_guard.py"; timeout = 5 }) })
+  SessionStart = @(@{ hooks = @(
+    @{ type = "command"; command = "python C:/Users/user/.claude/hooks/session_health_guard.py"; timeout = 10 },
+    @{ type = "command"; command = "python C:/Users/user/.claude/hooks/tool_call_guard.py"; timeout = 5 }
+  ) })
+  UserPromptSubmit = @(@{ hooks = @(
+    @{ type = "command"; command = "python C:/Users/user/.claude/hooks/session_health_guard.py"; timeout = 10 },
+    @{ type = "command"; command = "python C:/Users/user/.claude/hooks/tool_call_guard.py"; timeout = 5 }
+  ) })
   PostToolBatch = @(@{ hooks = @(@{ type = "command"; command = "python C:/Users/user/.claude/hooks/tool_call_guard.py"; timeout = 5 }) })
   Stop = @(@{ hooks = @(@{ type = "command"; command = "python C:/Users/user/.claude/hooks/stall_recover.py"; timeout = 15 }) })
 }
@@ -39,9 +49,13 @@ foreach ($name in $hookMap.Keys) {
 
 $settings | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $settingsPath -Encoding UTF8
 [Environment]::SetEnvironmentVariable("CLAUDE_CODE_STOP_HOOK_BLOCK_CAP", "64", "User")
+[Environment]::SetEnvironmentVariable("CLAUDE_CODE_BAD_SESSION_GUARD", "1", "User")
+[Environment]::SetEnvironmentVariable("CLAUDE_CODE_BAD_SESSION_MAX_BYTES", "6000000", "User")
+[Environment]::SetEnvironmentVariable("CLAUDE_CODE_BAD_SESSION_MAX_LEAK_EVENTS", "8", "User")
 
 python (Join-Path $hooksDir "stall_recover.py") --help 2>$null | Out-Null
 python (Join-Path $hooksDir "tool_call_guard.py") --help 2>$null | Out-Null
+python (Join-Path $hooksDir "session_health_guard.py") --help 2>$null | Out-Null
 
 Write-Output "Installed hooks into $hooksDir"
 Write-Output "Updated $settingsPath"
@@ -49,4 +63,3 @@ if (Test-Path $backupPath) {
   Write-Output "Backup: $backupPath"
 }
 Write-Output "Restart Claude Code or run /hooks to verify."
-

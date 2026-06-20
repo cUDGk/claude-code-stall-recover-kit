@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import sys
 import time
+import ctypes
+from ctypes import wintypes
 from pathlib import Path
 
 HOME = Path.home()
@@ -15,6 +17,12 @@ LOG_PATH = HOME / ".claude" / "hooks" / "stall_recover.log"
 MAX_REASON_CHARS = 12000
 MAX_BASH_SECONDS = 90
 MARKERS = ("<invoke name=", "<parameter name=", "antml:invoke", "antml:function_calls")
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 
 def log(message):
@@ -216,9 +224,132 @@ def edit_file(params):
         return False, f"Failed leaked Edit for {path}: {exc!r}"
 
 
+def clipboard_set(text):
+    if os.name != "nt":
+        return False, "Clipboard fallback is only implemented for Windows."
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    CF_UNICODETEXT = 13
+    GMEM_MOVEABLE = 0x0002
+    size = (len(text) + 1) * ctypes.sizeof(ctypes.c_wchar)
+    handle = None
+    opened = False
+    try:
+        if not user32.OpenClipboard(None):
+            return False, "OpenClipboard failed."
+        opened = True
+        if not user32.EmptyClipboard():
+            return False, "EmptyClipboard failed."
+        handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, size)
+        if not handle:
+            return False, "GlobalAlloc failed."
+        locked = kernel32.GlobalLock(handle)
+        if not locked:
+            return False, "GlobalLock failed."
+        try:
+            buf = ctypes.create_unicode_buffer(text)
+            ctypes.memmove(locked, ctypes.addressof(buf), size)
+        finally:
+            kernel32.GlobalUnlock(handle)
+        if not user32.SetClipboardData(CF_UNICODETEXT, handle):
+            return False, "SetClipboardData failed."
+        handle = None
+        return True, f"Auto-executed leaked win-control clipboard_set. chars={len(text)}"
+    except Exception as exc:
+        return False, f"Failed leaked clipboard_set: {exc!r}"
+    finally:
+        if opened:
+            user32.CloseClipboard()
+
+
+def clipboard_get():
+    if os.name != "nt":
+        return False, "Clipboard fallback is only implemented for Windows."
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = wintypes.HANDLE
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    CF_UNICODETEXT = 13
+    opened = False
+    try:
+        if not user32.OpenClipboard(None):
+            return False, "OpenClipboard failed."
+        opened = True
+        handle = user32.GetClipboardData(CF_UNICODETEXT)
+        if not handle:
+            return True, "Auto-executed leaked win-control clipboard_get. Clipboard has no text."
+        locked = kernel32.GlobalLock(handle)
+        if not locked:
+            return False, "GlobalLock failed."
+        try:
+            text = ctypes.wstring_at(locked)
+        finally:
+            kernel32.GlobalUnlock(handle)
+        return True, f"Auto-executed leaked win-control clipboard_get.\ncontent:\n{text[-10000:]}"
+    except Exception as exc:
+        return False, f"Failed leaked clipboard_get: {exc!r}"
+    finally:
+        if opened:
+            user32.CloseClipboard()
+
+
+def mcp_tool_parts(name):
+    if not name.startswith("mcp__"):
+        return None, None
+    parts = name.split("__", 2)
+    if len(parts) != 3:
+        return "", name
+    return parts[1], parts[2]
+
+
+def handle_mcp_call(name, params):
+    server, tool = mcp_tool_parts(name)
+    if server == "win-control" and tool == "clipboard_set":
+        text = params.get("text")
+        if text is None:
+            text = params.get("content")
+        if text is None:
+            return False, "Leaked win-control clipboard_set had no text/content parameter."
+        return clipboard_set(str(text))
+    if server == "win-control" and tool == "clipboard_get":
+        return clipboard_get()
+    return True, (
+        f"Detected leaked MCP tool `{name}` and absorbed it so the turn does not stall. "
+        "Stop hooks cannot invoke MCP servers directly. Do not repeat the XML/plain-text MCP call. "
+        "On the next continuation, either use the real native MCP tool_use for this action, use a "
+        "regular Bash/Read/Write/Edit fallback if that can complete the user request, or explain the "
+        "current result briefly. Captured params:\n"
+        + json.dumps(params, ensure_ascii=False, indent=2)[:5000]
+    )
+
+
 def execute_call(call):
     name = call["name"]
     params = call["params"]
+    if name.startswith("mcp__"):
+        return handle_mcp_call(name, params)
     if name == "Bash":
         return run_bash(params)
     if name == "Read":
@@ -234,7 +365,12 @@ def execute_call(call):
             "without repeating this task XML. Captured params:\n"
             + json.dumps(params, ensure_ascii=False, indent=2)[:5000]
         )
-    return False, f"Detected leaked {name} call, but auto-execution is not implemented for this tool. Params: {json.dumps(params, ensure_ascii=False)[:3000]}"
+    return True, (
+        f"Detected leaked unsupported tool `{name}` and absorbed it so the turn does not stall. "
+        "Do not repeat XML/plain-text tool syntax. Use a real tool call if the action is still needed. "
+        "Captured params:\n"
+        + json.dumps(params, ensure_ascii=False, indent=2)[:5000]
+    )
 
 
 def block(reason):
