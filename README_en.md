@@ -72,13 +72,25 @@ python .\tools\audit_sessions.py --quarantine 3bac9d8e-9ec4-4cdf-98c7-1be6d5ac40
 
 Active or busy sessions are not moved by default. Exit Claude Code first.
 
+Recovery order for a contaminated session:
+
+1. Run `/compact` while the session is idle. This can remove the leaked
+   `<invoke>` examples from context.
+2. If `court` / `<invoke>` still recurs, switch to a Sonnet-family model with
+   `/model`.
+3. If it still fails, use `/clear` or start a fresh session.
+
+`session_health_guard.py` blocks normal work prompts in risky sessions, but it
+allows recovery commands: `/compact`, `/clear`, `/rewind`, and `/model`.
+
 ## Notes
 
 This is a guardrail, not a replacement for keeping sessions healthy. The most
 reliable prevention is still:
 
 - start a new session before transcripts become huge;
-- do not resume a session after repeated raw `<invoke>` leaks;
+- after repeated raw `<invoke>` leaks, compact first; if that fails, switch
+  model or start a fresh session;
 - keep Bash commands short;
 - avoid command chains with `;` or `&&`;
 - write complex or Japanese-heavy content into files first;

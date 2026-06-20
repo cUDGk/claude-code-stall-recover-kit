@@ -111,6 +111,17 @@ The Stop-hook block cap is also raised with:
 No hook can make the model's native tool generation mathematically impossible to
 break. This setup reduces the chance of the bad output and recovers from common
 leaks when they happen. The best prevention is still to start fresh sessions
-before the transcript becomes huge and keep tool inputs short. If a session has
-already leaked multiple raw `<invoke>` blocks, do not keep resuming it; compact
-or start a new session so the bad examples are removed from context.
+before the transcript becomes huge and keep tool inputs short.
+
+Observed public workarounds:
+
+1. `/compact` can fix contaminated long sessions by replacing verbatim leaked
+   tool-call examples with a summary. It must be run while idle.
+2. In reports tied to Opus 4.8/1M and large always-loaded context, switching to
+   a Sonnet-family model fixed the `court`/XML leak immediately.
+3. `/clear` or a fresh session is the fallback when compaction or model switch
+   does not stabilize the session.
+
+`session_health_guard.py` blocks normal work prompts in contaminated sessions
+but deliberately allows `/compact`, `/clear`, `/rewind`, and `/model`, so the
+operator can apply recovery commands.

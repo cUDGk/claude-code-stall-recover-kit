@@ -154,6 +154,30 @@ def test_session_health_guard_blocks_bad_transcript():
     assert "隔離対象" in data["reason"]
 
 
+def test_session_health_guard_allows_recovery_commands():
+    text = (
+        "x" * 200
+        + "\n<invoke name=\"Bash\"><parameter name=\"command\">echo bad</parameter></invoke>"
+    )
+    tmp, transcript = make_transcript(text, "bad-session-compact")
+    proc = run_hook(
+        HEALTH_HOOK,
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "transcript_path": str(transcript),
+            "session_id": "bad-session-compact",
+            "prompt": "/compact",
+        },
+        {
+            "CLAUDE_CODE_BAD_SESSION_GUARD": "1",
+            "CLAUDE_CODE_BAD_SESSION_MAX_BYTES": "100",
+            "CLAUDE_CODE_BAD_SESSION_MAX_LEAK_EVENTS": "1",
+        },
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""
+
+
 def main():
     state = Path.home() / ".claude" / "hooks" / "stall_recover_state.json"
     if state.exists():
@@ -164,6 +188,7 @@ def main():
     test_mcp_absorb()
     test_guard_context()
     test_session_health_guard_blocks_bad_transcript()
+    test_session_health_guard_allows_recovery_commands()
     print("all hook tests passed")
 
 

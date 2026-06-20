@@ -8,6 +8,7 @@ MARKERS = ("<invoke name=", "<parameter name=", "antml:invoke", "antml:function_
 DEFAULT_MAX_BYTES = 6_000_000
 DEFAULT_MAX_LEAK_EVENTS = 8
 REPORT_DIR = Path.home() / ".claude" / "hooks" / "quarantine"
+RECOVERY_COMMANDS = ("/compact", "/clear", "/rewind", "/model")
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -97,6 +98,19 @@ def block(reason):
     print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
 
 
+def submitted_prompt(data):
+    for key in ("prompt", "user_prompt", "message"):
+        value = data.get(key)
+        if isinstance(value, str):
+            return value.strip()
+    return ""
+
+
+def is_recovery_command(prompt):
+    lower = prompt.lower()
+    return any(lower.startswith(command) for command in RECOVERY_COMMANDS)
+
+
 def main():
     if os.environ.get("CLAUDE_CODE_BAD_SESSION_GUARD", "1") in ("0", "false", "False"):
         return
@@ -104,6 +118,9 @@ def main():
     data = read_input()
     event = data.get("hook_event_name") or "UserPromptSubmit"
     if event not in ("SessionStart", "UserPromptSubmit"):
+        return
+
+    if event == "UserPromptSubmit" and is_recovery_command(submitted_prompt(data)):
         return
 
     transcript_path = data.get("transcript_path")
@@ -139,8 +156,10 @@ def main():
         f"last leak line: {stats['last_leak_line']}\n"
         f"report: {report}\n\n"
         "このセッションをresumeし続ける限り、フックで救済しても再発率が残ります。"
-        "新しいClaude Codeセッションを開始し、このsession_idをresumeしないでください。"
-        "必要な作業内容だけを新規セッションへ貼り直してください。"
+        "復旧するなら idle 状態で `/compact` を試してください。"
+        "それでも `court` / `<invoke>` が再発する場合は `/model` で Sonnet 系へ切り替えるか、"
+        "`/clear` または新しいClaude Codeセッションへ逃がしてください。"
+        "通常の作業プロンプトは、このsession_idでは続けないでください。"
     )
 
     if event == "SessionStart":
