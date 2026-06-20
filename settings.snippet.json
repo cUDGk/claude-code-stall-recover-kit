@@ -1,0 +1,52 @@
+{
+  "env": {
+    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "64"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/user/.claude/hooks/tool_call_guard.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/user/.claude/hooks/tool_call_guard.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/user/.claude/hooks/tool_call_guard.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/user/.claude/hooks/stall_recover.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
+

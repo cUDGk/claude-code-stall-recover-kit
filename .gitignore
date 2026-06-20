@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.bak.*
+stall_recover_state.json
+tool_call_guard_state.json
+.DS_Store
+Thumbs.db
+
